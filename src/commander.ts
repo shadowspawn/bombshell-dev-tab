@@ -2,9 +2,13 @@ import * as zsh from './zsh';
 import * as bash from './bash';
 import * as fish from './fish';
 import * as powershell from './powershell';
-import type { Command as CommanderCommand, ParseOptions } from 'commander';
+import type { Command as CommanderCommand } from 'commander';
 import t, { type RootCommand } from './t';
-import { assertDoubleDashes } from './shared';
+
+// rawArgs is available on the root command, but is not documented in the TypesScript types.
+interface CommandWithRawArgs extends CommanderCommand {
+  rawArgs: string[];
+}
 
 const execPath = process.execPath;
 const processArgs = process.argv.slice(1);
@@ -19,19 +23,35 @@ function quoteIfNeeded(path: string): string {
 }
 
 export default function tab(instance: CommanderCommand): RootCommand {
-  const programName = instance.name();
-
-  // Process the root command
-  processRootCommand(instance);
-
-  // Process all subcommands
-  processSubcommands(instance);
-
-  // Add the complete command for normal shell script generation
+  // The `complete` is overloaded. It performs as `complete <shell>` for the cli user,
+  // but is called as `complete -- [args]` as the completion handler. It would be cleaner to separate these into two commands,
+  // but stick with the standard @bomb.sh/tab pattern for consistency with other implementations and documentation.
   instance
-    .command('complete [shell]')
-    .description('Generate shell completion scripts')
-    .action(async (shell) => {
+    .command('complete')
+    // [sic] argument should be <shell>. Description formatted to match `Argument.choices()`.
+    .argument('[shell]', `shell (choices: "zsh", "bash", "fish", "powershell")`)
+    .allowExcessArguments(true) // Allow extra args for completion handler mode
+    .description(`Generate shell completion scripts`)
+    .action(async (shell, _options, cmd) => {
+      // Work out how we are being called, by user or by script as completion handler.
+      const rawArgs = (instance as CommandWithRawArgs).rawArgs;
+      const completeIndex = rawArgs.indexOf('complete');
+      const dashDashIndex = rawArgs.indexOf('--');
+
+      if (
+        completeIndex !== -1 &&
+        dashDashIndex !== -1 &&
+        dashDashIndex > completeIndex
+      ) {
+        t.parse(cmd.args);
+        return;
+      }
+
+      // Use Commander to display error formamtted to match Commander missing argument error.
+      if (shell === undefined) {
+        instance.error(`missing required argument 'shell'`);
+      }
+      const programName = instance.name();
       switch (shell) {
         case 'zsh': {
           const script = zsh.generate(programName, x);
@@ -66,37 +86,20 @@ export default function tab(instance: CommanderCommand): RootCommand {
           break;
         }
         default: {
-          console.error(`Unknown shell: ${shell}`);
-          console.error('Supported shells: zsh, bash, fish, powershell');
-          process.exit(1);
+          // Use Commander to display error formamtted to match `Argument.choices()` error message.
+          instance.error(
+            `command-argument value '${shell}' is invalid for argument 'shell'. Allowed choices are zsh, bash, fish, powershell.`
+          );
         }
       }
     });
 
-  // Override the parse method to handle completion requests before normal parsing
-  const originalParse = instance.parse.bind(instance);
-  instance.parse = function (argv?: readonly string[], options?: ParseOptions) {
-    const args = argv || process.argv;
-    const completeIndex = args.findIndex((arg) => arg === 'complete');
-    const dashDashIndex = args.findIndex((arg) => arg === '--');
+  // Process the root command, which now has a `complete` command.
+  processRootCommand(instance);
 
-    if (
-      completeIndex !== -1 &&
-      dashDashIndex !== -1 &&
-      dashDashIndex > completeIndex
-    ) {
-      // This is a completion request, handle it directly
-      const extra = args.slice(dashDashIndex + 1);
-
-      // Handle the completion directly
-      assertDoubleDashes(programName);
-      t.parse(extra);
-      return instance;
-    }
-
-    // Normal parsing
-    return originalParse(argv, options);
-  };
+  // Process all subcommands.
+  processSubcommands(instance);
+  // ToDo: add shells to complete command as choices.
 
   return t;
 }
@@ -209,7 +212,7 @@ function collectCommands(
   // Process subcommands
   for (const subcommand of command.commands) {
     // Skip the completion command
-    if (subcommand.name() === 'complete') continue;
+    //if (subcommand.name() === 'complete') continue;
 
     // Build the full path for this subcommand
     const subcommandPath = parentPath
