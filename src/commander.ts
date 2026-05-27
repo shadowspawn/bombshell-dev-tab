@@ -23,9 +23,11 @@ function quoteIfNeeded(path: string): string {
 }
 
 export default function tab(instance: CommanderCommand): RootCommand {
-  // The `complete` is overloaded. It performs as `complete <shell>` for the cli user,
+  // The `complete` command is overloaded. It performs as `complete <shell>` for the cli user,
   // but is called as `complete -- [args]` as the completion handler. It would be cleaner to separate these into two commands,
   // but stick with the standard @bomb.sh/tab pattern for consistency with other implementations and documentation.
+  //
+  // We manually produce errors and help for `complete shell` to match what Commander would produce for `Argument.choices(['zsh', ...])`.
   instance
     .command('complete')
     // [sic] argument should be <shell>. Description formatted to match `Argument.choices()`.
@@ -47,8 +49,8 @@ export default function tab(instance: CommanderCommand): RootCommand {
         return;
       }
 
-      // Use Commander to display error formamtted to match Commander missing argument error.
       if (shell === undefined) {
+        // Use Commander to display error formamtted to match Commander missing argument error.
         instance.error(`missing required argument 'shell'`);
       }
       const programName = instance.name();
